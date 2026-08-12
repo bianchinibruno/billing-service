@@ -1,5 +1,7 @@
 # billing-service
 
+[![ci](https://github.com/bianchinibruno/billing-service/actions/workflows/ci.yml/badge.svg)](https://github.com/bianchinibruno/billing-service/actions/workflows/ci.yml)
+
 Backend de assinaturas e cobrança, **construído para ser testado**. O foco não é ter muitos
 endpoints — é tratar corretamente o que quebra em cobrança de verdade: idempotência, reentrega de
 webhook, falha de pagamento e retry. É um domínio onde um erro não vira reclamação, vira prejuízo.
