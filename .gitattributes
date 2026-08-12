@@ -1,0 +1,2 @@
+# Normaliza para LF, senão scripts e configs chegam ao runner Linux com CRLF.
+* text=auto eol=lf
