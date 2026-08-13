@@ -1,0 +1,20 @@
+# Postgres para desenvolvimento e para rodar os testes de integração localmente.
+#
+#   docker compose up -d db
+#   DATABASE_URL=postgres://billing:billing@localhost:5432/billing npm test
+#
+# Sem DATABASE_URL, os testes de integração são pulados e só os unitários rodam.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: billing
+      POSTGRES_PASSWORD: billing
+      POSTGRES_DB: billing
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U billing']
+      interval: 5s
+      timeout: 5s
+      retries: 5
