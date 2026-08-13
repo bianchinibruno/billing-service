@@ -27,8 +27,9 @@ HTTP (Fastify)  ──►  Serviço de billing  ──►  Repositório (interfa
                                                    └─ mock | (futuro) gateway real
 ```
 
-Repositório e gateway são interfaces. As implementações — memória e um mock de pagamento — são
-trocáveis por Postgres e um gateway real sem tocar na regra de negócio.
+Repositório e gateway são interfaces. O repositório tem **duas implementações reais** — memória
+(testes/dev) e Postgres (produção) — cobertas pelo mesmo contrato de teste. O gateway é um mock
+configurável, trocável por um adaptador real sem tocar na regra de negócio.
 
 ## 3. Stack
 
@@ -37,7 +38,7 @@ trocáveis por Postgres e um gateway real sem tocar na regra de negócio.
 | TypeScript | Contrato de tipos no domínio de dinheiro, onde erro silencioso custa caro |
 | Fastify | HTTP leve, com `inject()` para testar sem subir servidor de rede |
 | Vitest | Suíte rápida; o mesmo ferramental usado nos testes de integração |
-| Repositório em memória | Testes e dev sem infra; a interface deixa o Postgres entrar depois |
+| Repositório: memória + Postgres | Memória para testes/dev sem infra; Postgres (via `pg`) para produção, atrás da mesma interface |
 | Gateway de pagamento mock | Controle total sobre falha/retry/duplicata — cenários que um gateway real não deixa provocar sob demanda |
 
 Valores monetários são **sempre inteiros em centavos** — dinheiro em ponto flutuante é fonte
@@ -55,9 +56,10 @@ garantida de erro de arredondamento.
 
 ## 5. Trade-offs
 
-- **Persistência em memória nesta fase.** Escolhida para o projeto rodar e ser testado sem infra. O
-  custo: não exercita concorrência real de banco ainda — por isso o Postgres com testcontainers está
-  no roadmap, não fingido como pronto.
+- **Dois drivers de persistência, um contrato.** Memória e Postgres implementam a mesma interface e
+  passam pela mesma suíte de contrato. Memória mantém os testes rápidos e o dev sem infra; Postgres é
+  o caminho de produção e prova a concorrência que a memória não consegue. O custo é manter dois
+  drivers — pago de propósito, porque é o que dá o teste rápido **e** a garantia real.
 - **Gateway mock em vez de Stripe.** O valor de QA está em controlar a falha; a integração real é um
   segundo passo. O mock existe atrás da mesma interface que um adaptador Stripe implementaria.
 - **Sem fila/assíncrono ainda.** Cobrança é síncrona nesta fatia; a régua de cobrança (dunning) e o
@@ -65,9 +67,10 @@ garantida de erro de arredondamento.
 
 ## 6. Testes
 
-Suíte no nível de serviço + HTTP (`app.inject()`), com asserções fortes — valor exato, status e
-código de erro, contagem de débitos — nunca `toBeDefined`.
+Duas camadas da pirâmide, com asserções fortes — valor exato, status e código de erro, contagem de
+débitos — nunca `toBeDefined`.
 
+**Serviço + HTTP** (`app.inject()`, roda sem infra):
 - `idempotencia.test.ts` — um retry da cobrança **não debita duas vezes**; cobrar fatura já paga é
   no-op.
 - `webhook.test.ts` — webhook reentregue (mesmo `eventId`) processado uma vez; recusa deixa a
@@ -76,15 +79,28 @@ código de erro, contagem de débitos — nunca `toBeDefined`.
   débito.
 - `billing.test.ts` — fluxos base e validações.
 
+**Integração contra Postgres real** (`contrato-repositorio.test.ts`):
+- Um **contrato, dois drivers**: as mesmas asserções rodam contra memória e contra Postgres,
+  provando que as implementações se comportam igual.
+- **Dedup sob concorrência**: 20 inserts concorrentes do mesmo evento de webhook, exatamente um
+  vence — a garantia atômica do `INSERT ... ON CONFLICT` que a versão em memória não consegue provar.
+- Rodam contra um Postgres real: um *service container* no CI, `docker-compose` localmente. Sem
+  `DATABASE_URL`, pulam graciosamente e a suíte unitária segue verde sem exigir Docker.
+
 **Prova de regressão** (a régua que o [qe-kit](https://github.com/bianchinibruno/qe-kit) aplica): com
 a idempotência quebrada de propósito, o teste falha com `expected 2 to be 1`; com o código correto,
 passa. Um teste que não falha quando o código está errado não prova nada.
 
 ```bash
 npm install
-npm test
+npm test                        # unitários; integração pula sem DATABASE_URL
 npm run typecheck
-npm run dev    # sobe em http://localhost:3000
+
+# integração contra Postgres real, local:
+docker compose up -d db
+DATABASE_URL=postgres://billing:billing@localhost:5432/billing npm test
+
+npm run dev                     # em memória; com DATABASE_URL, usa Postgres
 ```
 
 ## 7. Segurança
@@ -96,7 +112,8 @@ npm run dev    # sobe em http://localhost:3000
 
 ## 8. Deploy
 
-Roda local com `npm run dev`. Containerização e deploy (com Postgres) estão no roadmap — marcados como
+Roda local com `npm run dev` (em memória) ou com `DATABASE_URL` apontando para um Postgres. O schema
+é aplicado no boot. Containerização da app e deploy em nuvem estão no roadmap — marcados como
 não-prontos de propósito, porque "deploy funcionando" só conta quando está funcionando.
 
 ## 9. Métricas
@@ -107,7 +124,6 @@ padrão do projeto `api-escala`.
 
 ## 10. Próximos passos
 
-- Persistência em Postgres com testes de integração via testcontainers (concorrência real).
 - Régua de cobrança (dunning): retry programado, downgrade/cancelamento por inadimplência.
 - Upgrade/downgrade de plano com cobrança proporcional.
 - Autorização por assinatura e verificação HMAC de webhook, com testes de segurança.
